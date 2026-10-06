@@ -428,6 +428,8 @@ button.vital{cursor:pointer;font:inherit;color:inherit}
 .cfg-regions{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
 .cfg-region{display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg)}
 @media (max-width:560px){.cfg-row.pin-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.cfg-row.pin-row > .field{flex:1 1 42%;min-width:0}.cfg-row.pin-row > select.field{flex-basis:60%}}
+.darkdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px var(--surface);margin-right:6px;vertical-align:middle;opacity:.75}
+.addmap{margin:0 0 10px}
 </style>
 </head>
 <body>
@@ -475,6 +477,7 @@ const DEFAULT_CFG = {
     {k:"tempio", name:"Tempio", done:"Visitato", icon:"tempio", light:false},
     {k:"tesoro", name:"Tesoro", done:"Trovato", icon:"chiave", light:false},
     {k:"pericolo", name:"Pericolo", done:"Superato", icon:"pericolo", light:false},
+    {k:"luce", name:"Fonte di luce", done:"Accesa", icon:"luce", light:true},
     {k:"nota", name:"Nota", done:"Fatto", icon:"nota", light:false}],
   regions: [{k:"Regione iniziale", climate:"", note:"", w:[["Sereno",4,""],["Nuvoloso",3,""],["Pioggia",2,""],["Temporale",1,""]]}],
   counters: [],
@@ -611,7 +614,7 @@ function ago(t){ if(!t) return ""; const s = (t-Date.now())/1000;
   if (a<86400) return rtf.format(Math.round(s/3600),"hour"); return rtf.format(Math.round(s/86400),"day"); }
 
 const LSP = (()=>{ try { return "taccuino:"+new URL(SUPABASE_URL).hostname.split(".")[0]+":"; } catch(e){ return "taccuino:"; } })();
-function lsGet(k,def){ try{ const v = localStorage.getItem(LSP+k); return v==null?def:JSON.parse(v);}catch(e){return def} }
+function lsGet(k,def){ try{ let v = localStorage.getItem(LSP+k); if (v==null) v = localStorage.getItem("taccuino:"+k); return v==null?def:JSON.parse(v);}catch(e){return def} }
 function lsSet(k,v){ try{ localStorage.setItem(LSP+k,JSON.stringify(v)) }catch(e){} }
 
 function colorFor(id){ let h=0; for (const c of String(id||"")) h=(h*31+c.charCodeAt(0))>>>0; return `hsl(${h%360} 45% 42%)`; }
@@ -1046,7 +1049,9 @@ function PinForm({initial, master, onSave, onCancel, busy}){
 }
 
 /* ---------- mappa ---------- */
-function MapView({me, party, mapUrls, names, onMove, onClearTrail, onUpload, pins, pinOps}){
+function MapView({me, party, mapUrls, names, onMove, onClearTrail, onUpload, pins, pinOps, cfgOps}){
+  const [adding, setAdding] = useState(null);         // nuova mappa {name, dark}
+  const [cfgBusy, setCfgBusy] = useState(false);
   const [planeSel, setPlane] = useState(party?.plane || lsGet("plane", PLANES[0][0]));
   const plane = PLANE_NAME[planeSel] ? planeSel : PLANES[0][0];
   const [mode, setMode] = useState(null);           // null | "move" | "pin"
@@ -1162,8 +1167,21 @@ function MapView({me, party, mapUrls, names, onMove, onClearTrail, onUpload, pin
       <div><div className="eyebrow">${CFG.name}</div><h2>${PLANES.length>1 ? "Mappe" : (PLANE_NAME[plane] && PLANE_NAME[plane]!=="Mondo" ? PLANE_NAME[plane] : "Mappa del mondo")}</h2></div>
       <span className="spacer"></span>
       ${PLANES.length>1 && html`<div className="planes" role="group" aria-label="Piano">${PLANES.map(([k,n])=>html`<button type="button" key=${k} aria-pressed=${plane===k} onClick=${()=>setPlane(k)}>
-        ${party?.plane===k && typeof party.x==="number" && html`<span className="here" title="Il gruppo è qui"></span>`}${n}</button>`)}</div>`}
+        ${party?.plane===k && typeof party.x==="number" && html`<span className="here" title="Il gruppo è qui"></span>`}${planeDark(k) ? html`<span className="darkdot" title="Al buio"></span>` : null}${n}</button>`)}</div>`}
+      ${M && cfgOps && !adding && html`<button type="button" className="btn small" onClick=${()=>setAdding({name:"", dark:false})}>+ Mappa</button>`}
     </div>
+    ${M && cfgOps && adding && html`<form className="pincard addmap" onSubmit=${async e=>{ e.preventDefault(); const nm = adding.name.trim(); if (!nm) return;
+        setCfgBusy(true); const r = await cfgOps.addPlane(nm, adding.dark); setCfgBusy(false);
+        if (r.error) setErr(r.error); else { setAdding(null); setPlane(r.key); } }}>
+      <div className="eyebrow">Nuova mappa</div>
+      <div className="row">
+        <input id="newmap-name" className="field" style=${{flex:"1 1 220px"}} placeholder="Nome (es. Città sommersa, Piano dei sogni, Dungeon 1)" value=${adding.name} onChange=${e=>setAdding({...adding, name:e.target.value})} autoFocus/>
+        <label className="row" style=${{gap:6,flexWrap:"nowrap"}}><input id="newmap-dark" type="checkbox" checked=${adding.dark} onChange=${e=>setAdding({...adding, dark:e.target.checked})}/>al buio</label>
+        <button className="btn primary" disabled=${cfgBusy || !adding.name.trim()}>Aggiungi</button>
+        <button type="button" className="btn" onClick=${()=>setAdding(null)}>Annulla</button>
+      </div>
+      <p className="muted" style=${{margin:0,fontSize:".82rem"}}>Dopo averla aggiunta carichi l’immagine. Rinominare, riordinare o togliere le mappe: ⚙ Campagna → Mappe.</p>
+    </form>`}
 
     <div className=${"mapbox"+(mode?" moving":"")} ref=${vp} onPointerDown=${src?down:null} onPointerMove=${src?move:null} onPointerUp=${src?up:null} onPointerCancel=${src?up:null}>
       ${src ? html`
@@ -1236,12 +1254,16 @@ function MapView({me, party, mapUrls, names, onMove, onClearTrail, onUpload, pin
       ${M && src && html`<button type="button" className="btn small" disabled=${busy==="up"} onClick=${()=>fileIn.current?.click()}>${busy==="up"?"Caricamento…":"Sostituisci mappa"}</button>`}
     </div>
 
-    ${(kindsHere.length>0 || isDeep) && html`<div className="mapfoot">
+    ${(kindsHere.length>0 || isDeep || (M && cfgOps)) && html`<div className="mapfoot">
       ${kindsHere.length>0 && html`<span className="muted" style=${{fontSize:".85rem"}}>Mostra:</span>`}
       ${kindsHere.map(([k,n])=>html`<button type="button" key=${k} className="kchip" aria-pressed=${!hiddenKinds.includes(k)} onClick=${()=>toggleKind(k)}><${Glyph} kind=${k} size=${16}/>${n} <span className="muted">${planePins.filter(p=>p.kind===k).length}</span></button>`)}
-      ${isDeep && html`<span className="spacer"></span><span className="muted" style=${{fontSize:".85rem"}}>Luci accese: <b className="mono">${deepLit}</b>${deepAll?` su ${deepAll}`:""}</span>
-        ${M && src && html`<label className="row" style=${{gap:6,fontSize:".85rem"}}><input id="peek" type="checkbox" checked=${peek} onChange=${e=>setPeek(e.target.checked)}/>Vedi il buio come i giocatori</label>`}`}
+      ${(isDeep || (M && cfgOps)) && html`<span className="spacer"></span>`}
+      ${isDeep && html`<span className="muted" style=${{fontSize:".85rem"}} title=${"Si illuminano: "+(PIN_KINDS.filter(k=>PIN_LIGHT.has(k[0])).map(k=>k[1]+" ("+k[2].toLowerCase()+")").join(", ")||"nessun tipo di segnaposto")}>Luci accese: <b className="mono">${deepLit}</b>${deepAll?` su ${deepAll}`:""}</span>`}
+      ${M && cfgOps && html`<label className="row" style=${{gap:6,fontSize:".85rem"}}><input id="map-dark" type="checkbox" checked=${isDeep} disabled=${cfgBusy}
+        onChange=${async e=>{ setCfgBusy(true); const m = await cfgOps.setDark(plane, e.target.checked); setCfgBusy(false); if (m) setErr(m); }}/>Mappa al buio</label>`}
+      ${isDeep && M && src && html`<label className="row" style=${{gap:6,fontSize:".85rem"}}><input id="peek" type="checkbox" checked=${peek} onChange=${e=>setPeek(e.target.checked)}/>Vedi il buio come i giocatori</label>`}
     </div>`}
+    ${isDeep && M && deepAll===0 && html`<p className="muted" style=${{margin:"8px 0 0",fontSize:".85rem"}}>Mappa al buio: i giocatori vedono solo la piccola luce del gruppo. Per illuminare una zona metti un segnaposto ${PIN_KINDS.filter(k=>PIN_LIGHT.has(k[0])).map(k=>"“"+k[1]+"”").join(" o ")||"che fa luce"} e segnalo come ${(PIN_KINDS.find(k=>PIN_LIGHT.has(k[0]))?.[2]||"fatto").toLowerCase()}.</p>`}
     ${err && html`<p className="notice" role="alert" style=${{marginTop:10,borderColor:"var(--heart)"}}>${err} <button type="button" className="btn small" onClick=${()=>setErr("")}>Chiudi</button></p>`}
   </div>`;
 }
@@ -2086,7 +2108,7 @@ function CampaignSettings({sb, me, config, setConfig}){
       <div className="list">${f.planes.map((p,i)=>html`<div className="li cfg-row" key=${p.k||"n"+i}>
         <${Arrows} arr=${c=>c.planes} i=${i}/>
         <input className="field" aria-label="Nome della mappa" value=${p.name} onChange=${e=>up(c=>{ c.planes[i].name = e.target.value; })}/>
-        ${M.buio ? html`<label className="row" style=${{gap:6,flexWrap:"nowrap"}}><input type="checkbox" checked=${p.dark} onChange=${e=>up(c=>{ c.planes[i].dark = e.target.checked; })}/>al buio</label>` : html`<span></span>`}
+        <label className="row" style=${{gap:6,flexWrap:"nowrap"}}><input type="checkbox" checked=${p.dark && !!M.buio} onChange=${e=>up(c=>{ c.planes[i].dark = e.target.checked; if (e.target.checked) c.modules.buio = true; })}/>al buio</label>
         <button type="button" className="iconbtn" aria-label="Togli la mappa" disabled=${f.planes.length<=1} onClick=${()=>up(c=>{ c.planes.splice(i,1); })}>×</button>
       </div>`)}</div>
     </section>
@@ -2699,6 +2721,20 @@ function Main({sb, me, onSignOut}){
   applyCfg(camp.config);
   useEffect(()=>{ document.title = CFG.name; BRAND = CFG.name; },[CFG.name]);
   const book = useSpellBook(camp.spellsCustom);
+  const saveCfg = useCallback(async (fn) => {
+    const c = JSON.parse(JSON.stringify(normCfg(camp.config))); const extra = fn(c);
+    const {data, error} = await sb.from("campaign").update({config:normCfg(c), updated_at:new Date().toISOString()}).eq("id",1).select("config").maybeSingle();
+    if (error || !data) return {error: "Non salvato"+(error ? ": "+error.message : ": solo il master può cambiare le mappe.")};
+    camp.setConfig(data.config); return {extra};
+  },[sb, camp.config]);
+  const cfgOps = useMemo(()=> me.isMaster ? {
+    addPlane: async (name, dark) => { let key = ""; const r = await saveCfg(c=>{ key = slugKey(name, new Set(c.planes.map(p=>p.k))); c.planes.push({k:key, name, dark:!!dark});
+        if (dark){ c.modules.buio = true; if (!c.pinKinds.some(k=>k.light)) c.pinKinds.push({k:slugKey("luce", new Set(c.pinKinds.map(p=>p.k))), name:"Fonte di luce", done:"Accesa", icon:"luce", light:true}); } });
+      return r.error ? {error:r.error} : {key}; },
+    setDark: async (k, dark) => { const r = await saveCfg(c=>{ const p = c.planes.find(x=>x.k===k); if (p) p.dark = !!dark;
+        if (dark){ c.modules.buio = true; if (!c.pinKinds.some(x=>x.light)) c.pinKinds.push({k:slugKey("luce", new Set(c.pinKinds.map(p=>p.k))), name:"Fonte di luce", done:"Accesa", icon:"luce", light:true}); } });
+      return r.error || ""; },
+  } : null, [me.isMaster, saveCfg]);
   const {chars, party, maps, members, ready, error, combat, fighters} = camp;
   const urls = useSignedUrls(sb, maps);
   const names = useMemo(()=>Object.fromEntries(members.map(m=>[m.user_id, m.name])),[members]);
@@ -2869,7 +2905,7 @@ function Main({sb, me, onSignOut}){
               editable=${me.isMaster || openChar.owner===me.id} canDelete=${me.isMaster || openChar.owner===me.id}
               ownerName=${openChar.owner ? (names[openChar.owner]||"Giocatore") : "PNG del master"} world=${camp.world}/>`
           : html`<div className="empty"><h3>Scheda non trovata</h3><p className="muted">Forse è stata eliminata.</p><button className="btn" onClick=${()=>setView("gruppo")}>Torna al gruppo</button></div>`)}
-      ${view==="mappa" && html`<${MapView} me=${me} party=${party} mapUrls=${urls} names=${names} onMove=${onMove} onClearTrail=${onClearTrail} onUpload=${onUpload} pins=${camp.pins} pinOps=${pinOps}/>`}
+      ${view==="mappa" && html`<${MapView} me=${me} party=${party} mapUrls=${urls} names=${names} onMove=${onMove} onClearTrail=${onClearTrail} onUpload=${onUpload} pins=${camp.pins} pinOps=${pinOps} cfgOps=${cfgOps}/>`}
     </main>
     ${hoOpen && html`<${HandoutModal} h=${hoOpen} url=${hoUrls[hoOpen.id]} onClose=${closeHandout}/>`}
     <${Toasts} toasts=${toasts}/>
